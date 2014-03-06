@@ -25,41 +25,46 @@ import org.apache.spark.{SparkConf, ExceptionFailure, Success, FetchFailed}
 import org.apache.spark.executor.{ShuffleWriteMetrics, TaskMetrics}
 import org.apache.spark.scheduler._
 import org.apache.spark.storage._
-import org.apache.spark.util.JsonProtocol
+import org.apache.spark.util.FileLogger
 
 /** Simple standalone micro benchmark for event logging */
 object UIMicrobenchmark {
 
   def main(args: Array[String]) {
-    if (args.length < 1) {
-      println("Usage: ./bin/spark-class org.apache.spark.ui.UIMicrobenchmark [num events]")
-      System.exit(1)
-    }
 
-    val numEvents = Math.min(args(0).toInt, 10000)
-
-    val createStartTime = System.currentTimeMillis()
-    val events: Seq[SparkListenerEvent] = (1 to numEvents).map { i => makeRandomEvent() }
-    val createDuration = System.currentTimeMillis() - createStartTime
-
-    val serializeStartTime = System.currentTimeMillis()
-    events.foreach(JsonProtocol.sparkEventToJson)
-    val serializeDuration = System.currentTimeMillis() - serializeStartTime
-
+    // Initialize logging environment
     val conf = new SparkConf
     conf.set("spark.eventLog.enabled", "true")
-    val eventLogger = new EventLoggingListener("magenta", conf)
     val listenerBus = new SparkListenerBus
-    listenerBus.addListener(eventLogger)
+    val iterations = Seq[Int](
+      1000, 5000, 10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000)
+    val numEventsToDuration = mutable.Map[Int, Long]()
 
-    val logStartTime = System.currentTimeMillis()
-    events.foreach(listenerBus.postToAll)
-    eventLogger.stop()
-    val logDuration = System.currentTimeMillis() - logStartTime
+    // Start logging events
+    iterations.foreach { numEvents =>
+      println("* Logging %d events...".format(numEvents))
+      val eventLogger = new EventLoggingListener("crown", conf)
+      listenerBus.addListener(eventLogger)
+      val startTime = System.currentTimeMillis()
+      var i = 0
+      while (i < numEvents) {
+        listenerBus.postToListeners(makeRandomEvent(), Seq(eventLogger))
+        i += 1
+      }
+      eventLogger.stop()
+      val duration = System.currentTimeMillis() - startTime
+      println("-> Took %d ms!\n".format(duration))
+      numEventsToDuration(numEvents) = duration
+    }
 
-    println("Creating %d events took %d us".format(numEvents, createDuration))
-    println("Serializing %d events took %d us".format(numEvents, serializeDuration))
-    println("Logging %d events took %d us".format(numEvents, logDuration))
+    // Output result
+    val fileLogger = new FileLogger("/tmp/spark-events/result")
+    iterations.foreach { numEvents =>
+      val duration = numEventsToDuration(numEvents)
+      println("Logging %d events took %d ms".format(numEvents, duration))
+      fileLogger.logLine("%d %d".format(numEvents, duration))
+    }
+    fileLogger.close()
   }
 
   /**
