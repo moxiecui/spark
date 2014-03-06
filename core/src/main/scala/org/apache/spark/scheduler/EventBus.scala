@@ -36,7 +36,7 @@ private[spark] trait EventBus {
   /**
    * Post an event to all attached listeners. Return true if the shutdown event is posted.
    */
-  protected def postToAll(event: SparkListenerEvent): Boolean = {
+  def postToAll(event: SparkListenerEvent): Boolean = {
     postToListeners(event, sparkListeners)
   }
 
